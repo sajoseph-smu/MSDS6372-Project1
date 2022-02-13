@@ -1,30 +1,1206 @@
 ---
-title: "MSDS Project 2"
-author: "Shijo Joseph"
+title: "MSDS6372 Project 1"
+author: "Shijo Joseph , Lihao Wang, Mike Gebhardt"
 date: "2/2/2022"
 output: html_document
 ---
+
+#Project 1
+## Introduction
+The following data (data1.csv) was given to us to understand which drivers/predictors can be used to create a model to estimate the retail price of a vehicle.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r load packages, echo=FALSE}
+#load different libraries and function to enable us to complete this analysis
+library(readr)
+library(tidyr) #enables piping
+library(dplyr)#enables enhancement to cleanse data
+library(ggplot2)
+library(caret) #enables classfication and regression training
+library(e1071)
+library(class)
+library(stringr)
+library(GGally)
+library(tidyverse)
+library(corrplot)
+library(car)     
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+library(naniar)
+library(leaps)
+library(olsrr)
+library(MASS)
+library(rpart)
 
-```{r cars}
-summary(cars)
 ```
 
-## Including Plots
+```{r load data sets, echo=FALSE}
+#uploads the data into R to start analysis
+# R file is at https://github.com/sajoseph-smu/MSDS6372-Project1/blob/main/R/Project1.Rmd
 
-You can also embed plots, for example:
+CarData <- read_csv("https://raw.githubusercontent.com/sajoseph-smu/MSDS6372-Project1/main/data1.csv", show_col_types = FALSE) 
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+summary(CarData)
+
+# Converting character value attributes to factors
+CarData$`Vehicle Style` = as.factor(CarData$`Vehicle Style`)
+CarData$`Vehicle Size` = as.factor(CarData$`Vehicle Size`)
+CarData$`Market Category`= as.factor(CarData$`Market Category`)
+CarData$Driven_Wheels = as.factor(CarData$Driven_Wheels)
+CarData$`Transmission Type` = as.factor(CarData$`Transmission Type`)
+CarData$`Engine Fuel Type` = as.factor(CarData$`Engine Fuel Type`)
+#CarData$Model = as.factor(CarData$Model)
+#CarData$Make = as.factor(CarData$Make)
+
+
+
+# looking at the summary statistics 
+summary(CarData)
+
+# will see if this is nessary in the EDA
+#CarData$LogMSRP = log(CarData$MSRP)
+
+dim(CarData)
+# Cardata has 11914 records 
+
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+This portion to be used for the data cleansing
+```{r Data Cleansing}
+
+# look at the car data for where there are Nulls 
+sapply(CarData, function(x) sum(is.na(x)))
+gg_miss_var(CarData)
+
+#Clean up the Engine Cylinders.
+CarData %>% filter(is.na(`Engine Cylinders`))
+
+
+# We created a new data set based off the original and did some data cleansing by imputing
+CarData_Clean = CarData
+
+
+
+#CarData_Clean = CarData_Clean %>% group_by(Make,Model) %>% fill(`Engine Cylinders` )
+
+# We notice that the data for missing cylinders were for electric and rotary cars so we forced them to 0 
+CarData_Clean = CarData_Clean %>% mutate(
+`Engine Cylinders` = case_when(  is.na(`Engine Cylinders`) == TRUE ~ 0,
+                            
+                            TRUE ~ `Engine Cylinders`
+
+                            )
+)
+
+
+#Look for next variable
+gg_miss_var(CarData_Clean)
+
+#Clean up the Number of doors.  Upon finding that its just a Ferrari and a tesla model S .. We went to the manufacture site and looked up the values to updated
+CarData_Clean %>% filter(is.na(`Number of Doors`))
+
+#We noticed that these same make models had values already populated in it for other years so we filled the missing data using them  
+CarData_Clean = CarData_Clean %>% group_by(Make,Model) %>% fill(`Number of Doors` )
+
+CarData_Clean = CarData_Clean %>% group_by(Make,Model) %>% fill(`Number of Doors`, .direction = 'up' )
+
+#Look for next variable
+gg_miss_var(CarData_Clean)
+
+#Fuel type is next variable so we saw that it was not many cars so we put that to "NA" value  to remove the nulls
+CarData_Clean %>% filter(is.na(`Engine Fuel Type`))
+
+CarData_Clean$`Engine Fuel Type` = as.character(CarData_Clean$`Engine Fuel Type`)
+CarData_Clean = CarData_Clean %>% mutate(
+`Engine Fuel Type` = case_when(  is.na(`Engine Fuel Type`) == TRUE ~ 'NA',
+                            
+                            TRUE ~ `Engine Fuel Type`
+
+                            )
+)
+CarData_Clean$`Engine Fuel Type` = as.factor(CarData_Clean$`Engine Fuel Type`)
+
+#Look for next variable
+gg_miss_var(CarData_Clean)
+
+
+#Engine HP is our last NA in which we first fill up and down any make model combo for Engine HP 
+CarData_Clean %>% filter(is.na(`Engine HP`))
+# We created a new data set based off the original and did some data cleansing by imputing
+
+CarData_Clean = CarData_Clean %>% group_by(Make,Model) %>% fill(`Engine HP` )
+CarData_Clean = CarData_Clean %>% group_by(Make,Model) %>% fill(`Engine HP`,.direction = 'up' )
+
+
+# Once Filled we ended up with a some cars in which we found the values from the manufactures site and added them 
+
+
+CarData_Clean = CarData_Clean %>% mutate(
+`Engine HP` = case_when(  is.na(`Engine HP`) == TRUE  & Make == 'FIAT'   & Model == '500e'  ~ 111,
+                          is.na(`Engine HP`) == TRUE  & Make == 'Kia'   & Model == 'Soul EV'  ~ 105,
+                          is.na(`Engine HP`) == TRUE  & Make == 'Honda'   & Model == 'Fit EV'  ~ 123, 
+                          is.na(`Engine HP`) == TRUE  & Make == 'Tesla'   & Model == 'Model S' & MSRP > 100000 ~ 630,  
+                          is.na(`Engine HP`) == TRUE  & Make == 'Tesla'   & Model == 'Model S'  ~ 360,  
+                          is.na(`Engine HP`) == TRUE  & Make == 'Nissan'   & Model == 'Leaf'  ~ 107, 
+                            TRUE ~ `Engine HP`
+
+                            )
+)
+
+#Now we have a clean data set
+gg_miss_var(CarData_Clean)
+
+
+# Through analysis we have found that one highway mpg is incorrrect 
+CarData_Clean$`highway MPG`[1120] =34#Fixed 2017 Audi A6 MPG
+
+```
+
+
+EDA portion of the document
+``` {r EDA create new attributes}
+#Find relationship between popularity and MSRP 
+
+#Popularity scatterplots to find correlation in data
+CarData_Clean %>% ggplot(aes(x=Popularity, y=MSRP)) + geom_point()+ geom_smooth(method='lm', formula= y~x) 
+
+CarData_Clean %>% ggplot(aes(x=log(Popularity), y=MSRP)) + geom_point()+ geom_smooth(method='lm', formula= y~x) 
+
+CarData_Clean %>% ggplot(aes(x=Popularity, y=log(MSRP))) + geom_point()+ geom_smooth(method='lm', formula= y~x) 
+CarData_Clean %>% ggplot(aes(x=log(Popularity), y=log(MSRP))) + geom_point()+ geom_smooth(method='lm', formula= y~x) 
+
+#From the 4 graphs.. we have come to the conclusion that there is no correlation for popularity to the MSRP even through log transformation.
+
+
+# We created the below attributes to reduce the levels of the market category and fuel type dimensions
+
+
+# created a variable Fuel_Category to help reduce the levels of Engine Fuel Type as 10 levels. Fuel Category will have 4 levels. This helps us remove Engine Fuel Type from model
+#This also clears up any issues with NA values as they are put into the regular gas type
+levels(CarData_Clean$`Engine Fuel Type`)
+CarData_Clean %>% ggplot(aes(x=`Engine HP`, y=MSRP, color = `Engine Fuel Type`)) + geom_point() + geom_smooth(method='lm', formula= y~x)
+CarData_Clean %>% ggplot(aes(x=`Engine Fuel Type`, y=MSRP, color = `Engine Fuel Type`)) + geom_boxplot() 
+
+CarData_Clean = CarData_Clean %>% mutate(
+Fuel_Category = case_when(  str_detect(`Engine Fuel Type`,'diesel') == TRUE ~ 'diesel',
+                            str_detect(`Engine Fuel Type`,'electric') == TRUE ~ 'electric',
+                            str_detect(`Engine Fuel Type`,'premium') == TRUE~ 'premium',
+                            TRUE ~ 'regular'
+
+                            )
+)
+
+
+# created a variable Vehicle_Type to help reduce the levels of Market Category. VehicleType will have 3 levels. This helps us remove Market Category from model
+#This also clears up any issues with NA values as they are put into the Standard Group
+levels(CarData_Clean$`Market Category`)
+CarData_Clean %>% ggplot(aes(x=`Engine HP`, y=MSRP, color = `Market Category`)) + geom_point() + geom_smooth(method='lm', formula= y~x)
+CarData_Clean %>% ggplot(aes(x=`Market Category`, y=MSRP, color = `Market Category`)) + geom_boxplot() 
+
+CarData_Clean = CarData_Clean %>% mutate(
+Vehicle_Type = case_when(  str_detect(`Market Category`,'Exotic') == TRUE ~ 'Exotic',
+                            str_detect(`Market Category`,'Luxury') == TRUE ~ 'Luxury',
+                            TRUE ~ 'Standard'
+
+                            )
+)
+
+CarData_Clean = CarData_Clean %>% mutate(
+Performance_Type = case_when(  str_detect(`Market Category`,'High-Performance') == TRUE ~ 'High-Performance',
+                            str_detect(`Market Category`,'Performance') == TRUE ~ 'Performance',
+                            TRUE ~ 'Standard'
+
+                            )
+)
+
+CarData_Clean$Fuel_Category = as.factor(CarData_Clean$Fuel_Category)
+CarData_Clean$Vehicle_Type = as.factor(CarData_Clean$Vehicle_Type)
+CarData_Clean$Performance_Type = as.factor(CarData_Clean$Performance_Type)
+
+
+
+
+
+#we run a model to see the vifs and summary stats
+```
+
+
+
+```{r looking correlation}
+
+# Find all numeric variables in cleaned dataset
+numericVars <- which(sapply(CarData_Clean, is.numeric))
+
+# Create df of numeric categories only
+both_numVar <- CarData_Clean[, numericVars]
+cor_numVar <- cor(both_numVar, use="pairwise.complete.obs") #correlations of numeric variables
+
+# Sort on decreasing correlations with SalePrice
+cor_sorted <- as.matrix(sort(cor_numVar[,'MSRP'], decreasing = TRUE))
+
+# Select only high correlations
+CorHigh <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.05)))
+cor_numVar <- cor_numVar[CorHigh, CorHigh]
+
+# Plot correlations
+corrplot.mixed(cor_numVar, tl.col="black", tl.pos = "lt")
+
+```
+
+
+``` {r Create model}
+
+full.model<-aov(MSRP~. ,data=CarData_Clean)
+summary(full.model)
+anova(full.model)
+
+# Anova will remove highway mpg , Number of doors , Vehicle Size, Engine Cylinders based on the Anova. we also remove the Market Category and the Engine Fuel Type with the new ones
+
+CarData_Clean = CarData_Clean %>% ungroup()
+
+CarData_Model <- dplyr::select(CarData_Clean, -c(  "Vehicle Size", "Engine Cylinders", "Number of Doors", "highway MPG", "Make", "Model","Market Category", "Engine Fuel Type" ))
+
+
+
+
+initial.model<-lm(MSRP~.,data=CarData_Model)
+anova(initial.model)
+summary(initial.model)
+
+vif(initial.model)
+
+# based off the vif we will remove the Transmission type
+
+
+CarData_Model <- dplyr::select(CarData_Clean, -c(,  "Vehicle Size", "Engine Cylinders", "Number of Doors", "highway MPG", "Make", "Model", "Market Category", "Engine Fuel Type", "Transmission Type" ))
+initial.model2<-lm(MSRP~.,data=CarData_Model)
+anova(initial.model2)
+summary(initial.model2)
+
+vif(initial.model2)
+
+#Keeping Fuel Category I will remove the vehicle style from the model.
+
+CarData_Model <- dplyr::select(CarData_Clean, -c(,  "Vehicle Size", "Engine Cylinders", "Number of Doors", "highway MPG", "Make", "Model", "Market Category", "Engine Fuel Type", "Transmission Type", "Vehicle Style" ))
+initial.model3<-lm(MSRP~.,data=CarData_Model)
+anova(initial.model3)
+summary(initial.model3)
+vif(initial.model3)
+
+# Removing Popularity as it fell out
+
+CarData_Model <- dplyr::select(CarData_Clean, -c(,  "Vehicle Size", "Engine Cylinders", "Number of Doors", "highway MPG", "Make", "Model", "Market Category", "Engine Fuel Type", "Transmission Type", "Vehicle Style", 'Popularity'  ))
+initial.model4<-lm(MSRP~.,data=CarData_Model)
+anova(initial.model4)
+vif(initial.model4)
+summary(initial.model4)
+confint.lm(initial.model4)
+
+
+# Taking out fuel category brings the vif down ot 1 and 3
+
+
+CarData_Model <- dplyr::select(CarData_Clean, -c(,  "Vehicle Size", "Engine Cylinders", "Number of Doors", "highway MPG", "Make", "Model", "Market Category", "Engine Fuel Type", "Transmission Type", "Vehicle Style", 'Popularity', Fuel_Category  ))
+initial.model4<-lm(MSRP~.,data=CarData_Model)
+anova(initial.model4)
+vif(initial.model4)
+summary(initial.model4)
+confint.lm(initial.model4)
+
+
+
+
+# Function for Root Mean Squared Error
+Defined_RMSE <- function(error) { sqrt(mean(error^2)) }
+ASE <- function(error) { mean(error^2) }
+
+Defined_RMSE(initial.model4$residuals)
+ASE(initial.model4$residuals)
+
+
+```
+
+
+
+
+Training and test set creation 
+
+```{r Training Test Set creation }
+# Set some input variables to define the splitting.
+# Input 1. The data frame that you want to split into training, validation, and test.
+df <- CarData_Clean
+
+# Input 2. Set the fractions of the dataframe you want to split into training, 
+# validation, and test.
+set.seed(1995)
+fractionTraining   <- 0.80
+fractionValidation <- 0.10
+fractionTest       <- 0.10
+
+# Compute sample sizes.
+sampleSizeTraining   <- floor(fractionTraining   * nrow(df))
+sampleSizeValidation <- floor(fractionValidation * nrow(df))
+sampleSizeTest       <- floor(fractionTest       * nrow(df))
+
+# Create the randomly-sampled indices for the dataframe. Use setdiff() to
+# avoid overlapping subsets of indices.
+indicesTraining    <- sort(sample(seq_len(nrow(df)), size=sampleSizeTraining))
+indicesNotTraining <- setdiff(seq_len(nrow(df)), indicesTraining)
+indicesValidation  <- sort(sample(indicesNotTraining, size=sampleSizeValidation))
+indicesTest        <- setdiff(indicesNotTraining, indicesValidation)
+
+# Finally, output the three dataframes for training, validation and test.
+CarData_Training   <- df[indicesTraining, ]
+CarData_Validation <- df[indicesValidation, ]
+CarData_Test       <- df[indicesTest, ]
+
+```
+
+
+
+
+
+```{r Test ASE for objective 1}
+
+
+reg.fwd=regsubsets(MSRP~ Year + `Engine HP` + Driven_Wheels + `city mpg` + Vehicle_Type + Performance_Type,data=CarData_Training,method="forward",nvmax=10)
+summary(reg.fwd)
+
+#Really handy predict function
+predict.regsubsets =function (object , newdata ,id ,...){
+  form=as.formula (object$call [[2]])
+  mat=model.matrix(form ,newdata )
+  coefi=coef(object ,id=id)
+  xvars=names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+
+testASE<-c()
+#note my index is to 20 since that what I set it in regsubsets
+for (i in 1:10){
+  predictions<-predict.regsubsets(object=reg.fwd,newdata=CarData_Test,id=i) 
+  testASE[i]<-mean((CarData_Test$MSRP-predictions)^2)
+}
+par(mfrow=c(1,1))
+plot(1:10,testASE,type="l",xlab="# of predictors",ylab="test vs train ASE" , ylim=c(1e9,3e9) )
+index<-which(testASE==min(testASE))
+points(index,testASE[index],col="red",pch=10)
+rss<-summary(reg.fwd)$rss
+lines(1:10,rss/nrow(CarData_Training),lty=3,col="blue")  #Dividing by 100 since ASE=RSS/sample size
+
+#looking for the 12 coefs
+
+coef(reg.fwd,10)
+final.model = lm(MSRP~ Year + `Engine HP` + Driven_Wheels + `city mpg` + Vehicle_Type + Performance_Type, data = CarData_Training)
+
+final.interpretable = final.model
+
+ASE(final.interpretable$residuals)
+Defined_RMSE(final.interpretable$residuals)
+summary(final.interpretable)$adj.r.squared
+
+plot(final.model)
+summary(final.model)
+confint.lm(final.model)
+
+
+## Even though the simple model plots look to be without constant variance, we will default to the Central Limit Theorem since we have a large sample size.
+
+
+
+
+
+
+
+## just testing to remove bugatti cars  do not add to document
+
+#CarData_Model2 = CarData_Model[-c(11363,11365,11364),]
+
+
+#final.model2 = lm(MSRP~ `Engine HP` + Driven_Wheels + `city mpg` + Fuel_Category + Vehicle_Type + Performance_Type, data = CarData_Model2)
+
+#plot(final.model2)
+#summary(final.model2)
+#confint.lm(final.model2)
+
+#######################
+
+
+
+
+```
+
+```{r Validation test}
+
+reg.fwd=regsubsets(MSRP~ Year + `Engine HP` + Driven_Wheels + `city mpg` + Vehicle_Type + Performance_Type,data=CarData_Training,method="forward",nvmax=10)
+summary(reg.fwd)
+
+#Really handy predict function
+predict.regsubsets =function (object , newdata ,id ,...){
+  form=as.formula (object$call [[2]])
+  mat=model.matrix(form ,newdata )
+  coefi=coef(object ,id=id)
+  xvars=names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+
+testASE<-c()
+#note my index is to 20 since that what I set it in regsubsets
+for (i in 1:10){
+  predictions<-predict.regsubsets(object=reg.fwd,newdata=CarData_Validation,id=i) 
+  testASE[i]<-mean((CarData_Validation$MSRP-predictions)^2)
+}
+par(mfrow=c(1,1))
+plot(1:10,testASE,type="l",xlab="# of predictors",ylab="Validation vs train ASE" , ylim=c(1e9,3e9) )
+index<-which(testASE==min(testASE))
+points(index,testASE[index],col="red",pch=10)
+rss<-summary(reg.fwd)$rss
+lines(1:10,rss/nrow(CarData_Training),lty=3,col="blue")  #Dividing by 100 since ASE=RSS/sample size
+
+
+
+
+
+```
+
+
+```{r complex model}
+
+
+# create df to be used in model selection (removing make model market category and fuel type as they have been replaced by created values)
+
+
+CarData_Model <- dplyr::select(CarData_Clean, -c(  "Make", "Model","Market Category", "Engine Fuel Type" ))
+
+
+
+#Run all three feature selections 
+
+
+# Set up the initial model needed to be used in the forward, backward, stepwise and custom models
+fit_Initial = lm(MSRP~.  , data = CarData_Model)
+
+forward = ols_step_forward_p(fit_Initial, penter = .01, details = FALSE)
+backward = ols_step_backward_p(fit_Initial, prem = .01, details = FALSE)
+stepwise = ols_step_both_p(fit_Initial, pent = .01, prem = .01, details = FALSE)
+
+forward
+backward
+stepwise
+
+
+
+# Set up the initial model needed to be used in the forward, backward, stepwise and custom models
+fit_Initiallog = lm(log(MSRP)~.  , data = CarData_Model)
+
+forwardlog = ols_step_forward_p(fit_Initiallog, penter = .01, details = FALSE)
+backwardlog = ols_step_backward_p(fit_Initiallog, prem = .01, details = FALSE)
+stepwiselog = ols_step_both_p(fit_Initiallog, pent = .01, prem = .01, details = FALSE)
+
+forwardlog
+backwardlog
+stepwiselog
+
+
+
+# look at anova table and summary and plots
+anova(forward)
+summary(forward)
+plot(forward_fit)
+
+# Get PRESS value for Forward 
+MPV::PRESS(forward_fit)
+
+
+#because of the the spread of data .. we will look to log the msrp
+
+CarData_Clean %>% ggplot(aes(x=`Engine HP`, y=log(MSRP))) + geom_point() + geom_smooth(method='lm', formula= y~x)
+CarData_Clean %>% ggplot(aes(x=`city mpg`, y=log(MSRP))) + geom_point() + geom_smooth(method='lm', formula= y~x)
+
+
+CarData_Clean %>% ggplot(aes(x=`Fuel_Category`, y=MSRP, color = Fuel_Category)) + geom_boxplot() 
+CarData_Clean %>% ggplot(aes(x=`Fuel_Category`, y=log(MSRP), color = Fuel_Category)) + geom_boxplot() 
+
+CarData_Clean %>% ggplot(aes(x=Vehicle_Type, y=log(MSRP), color = Vehicle_Type)) + geom_boxplot()
+CarData_Clean %>% ggplot(aes(x=Vehicle_Type, y=MSRP, color = Vehicle_Type)) + geom_boxplot() 
+
+CarData_Clean %>% ggplot(aes(x=Performance_Type, y=log(MSRP), color = Performance_Type)) + geom_boxplot() 
+CarData_Clean %>% ggplot(aes(x=Performance_Type, y=MSRP, color = Performance_Type)) + geom_boxplot() 
+
+
+
+
+#look to if quadratic solves issue 
+
+
+
+
+
+attach(CarData_Clean)
+# adding complexity to relationship between life_expectancy and hiv_aids
+complex.model1 <- lm(log(MSRP)~`Engine HP`)
+plot(complex.model1)
+
+# visually inspecting the relationship between life_expectancy and hiv_aids after transformations
+par(mfrow=c(1,3))
+plot(`Engine HP`,MSRP, xlab="Engine HP",ylab="MSRP")
+#new<-data.frame(`Engine HP`=seq(0,11914,1))
+#lines(seq(1,11914 ,1),predict(complex.model1 ,newdata=new),col="red",lwd=4)
+plot(complex.model1$fitted.values,complex.model1$residuals,xlab="Fitted Values",ylab="Residuals")
+plot(CarData_Clean$`Engine HP`,complex.model1$residuals,xlab="Engine HP",ylab="Residuals")
+
+
+
+
+
+
+
+
+
+
+CarData_Clean %>% ggplot(aes(x=Vehicle_Type, y=log(MSRP))) + geom_boxplot() 
+
+CarData_Clean %>% ggplot(aes(x=Performance_Type, y=log(MSRP))) + geom_boxplot() 
+
+CarData_Clean %>% ggplot(aes(x=`Engine HP`, y=log(MSRP), color = Vehicle_Type )) + geom_point() + geom_smooth(method='lm', formula= y~x)
+
+CarData_Clean %>% ggplot(aes(x=`Engine HP`, y=log(MSRP), color = Performance_Type )) + geom_point() + geom_smooth(method='lm', formula= y~x)
+
+
+#use this part 
+final.complex = lm(log(MSRP)~ Year + `Engine HP`*Vehicle_Type , data = CarData_Clean)
+
+plot(final.complex)
+summary(final.complex)
+confint(final.complex)
+```
+
+
+``` {r Summary Stats for table }
+
+
+ASE(final.interpretable$residuals)
+Defined_RMSE(final.interpretable$residuals)
+summary(final.interpretable)$adj.r.squared
+
+
+ASE(final.complex$residuals)
+Defined_RMSE(final.complex$residuals)
+summary(final.complex)$adj.r.squared
+
+ASE(forwardlog$residuals)
+Defined_RMSE(forwardlog$residuals)
+summary(forwardlog)$adj.r.squared
+
+
+ASE(backwardlog$residuals)
+Defined_RMSE(backwardlog$residuals)
+summary(backwardlog)$adj.r.squared
+
+
+
+ASE(stepwiselog$residuals)
+Defined_RMSE(stepwiselog$residuals)
+summary(stepwiselog)$adj.r.squared
+
+
+
+AIC(stepwiselog, forwardlog, final.complex, final.interpretable)
+BIC(stepwiselog, forwardlog, final.complex, final.interpretable)
+forwardlog
+backwardlog
+stepwiselog
+
+
+```
+
+
+
+```{r Training Test Set creation }
+# Set some input variables to define the splitting.
+# Input 1. The data frame that you want to split into training, validation, and test.
+df <- CarData_Clean
+
+# Input 2. Set the fractions of the dataframe you want to split into training, 
+# validation, and test.
+set.seed(12347)
+fractionTraining   <- 0.80
+fractionValidation <- 0.10
+fractionTest       <- 0.10
+
+# Compute sample sizes.
+sampleSizeTraining   <- floor(fractionTraining   * nrow(df))
+sampleSizeValidation <- floor(fractionValidation * nrow(df))
+sampleSizeTest       <- floor(fractionTest       * nrow(df))
+
+# Create the randomly-sampled indices for the dataframe. Use setdiff() to
+# avoid overlapping subsets of indices.
+indicesTraining    <- sort(sample(seq_len(nrow(df)), size=sampleSizeTraining))
+indicesNotTraining <- setdiff(seq_len(nrow(df)), indicesTraining)
+indicesValidation  <- sort(sample(indicesNotTraining, size=sampleSizeValidation))
+indicesTest        <- setdiff(indicesNotTraining, indicesValidation)
+
+# Finally, output the three dataframes for training, validation and test.
+CarData_Training   <- df[indicesTraining, ]
+CarData_Validation <- df[indicesValidation, ]
+CarData_Test       <- df[indicesTest, ]
+
+```
+
+
+
+
+
+```{r Test ASE for objective 2}
+
+
+reg.fwd=regsubsets(log(MSRP)~Year + `Engine HP`*Vehicle_Type ,data=CarData_Training,method="forward",nvmax=35)
+summary(reg.fwd)
+
+#Really handy predict function
+predict.regsubsets =function (object , newdata ,id ,...){
+  form=as.formula (object$call [[2]])
+  mat=model.matrix(form ,newdata )
+  coefi=coef(object ,id=id)
+  xvars=names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+
+testASE<-c()
+#note my index is to 20 since that what I set it in regsubsets
+for (i in 1:6){
+  predictions<-predict.regsubsets(object=reg.fwd,newdata=CarData_Test,id=i) 
+  testASE[i]<-mean((log(CarData_Test$MSRP)-predictions)^2)
+}
+par(mfrow=c(1,1))
+plot(1:6,testASE,type="l",xlab="# of predictors",ylab="test vs train ASE")
+index<-which(testASE==min(testASE))
+points(index,testASE[index],col="red",pch=10)
+rss<-summary(reg.fwd)$rss
+lines(1:6,rss/nrow(CarData_Training),lty=3,col="blue")  #Dividing by 100 since ASE=RSS/sample size
+
+#looking for the 6 coefs
+
+coef(reg.fwd,6)
+final.model = lm(log(MSRP)~Year + `Engine HP`*Vehicle_Type, data = CarData_Model)
+
+
+summary(final.model)
+
+
+# Function for Root Mean Squared Error
+Defined_RMSE <- function(error) { sqrt(mean(error^2)) }
+ASE <- function(error) { mean(error^2) }
+
+Defined_RMSE(final.model$residuals)
+ASE(final.model$residuals)
+```
+
+
+
+
+
+```{r Scratch board}
+view(CarData_Clean)
+
+
+
+sapply(CarData_Clean, function(x) sum(is.na(x)))
+
+
+# we now will look to remove highly corellated columns from the data set
+
+# Find all numeric variables in cleaned dataset
+numericVars <- which(sapply(CarData_Clean, is.numeric))
+
+# Create df of numeric categories only
+both_numVar <- CarData_Clean[, numericVars]
+cor_numVar <- cor(both_numVar, use="pairwise.complete.obs") #correlations of numeric variables
+
+# Sort on decreasing correlations with SalePrice
+cor_sorted <- as.matrix(sort(cor_numVar[,'MSRP'], decreasing = TRUE))
+
+# Select only high correlations
+CorHigh <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.1)))
+cor_numVar <- cor_numVar[CorHigh, CorHigh]
+
+# Plot correlations
+corrplot.mixed(cor_numVar, tl.col="black", tl.pos = "lt")
+
+
+full.model<-lm(MSRP~.,data=CarData_Clean)  # . means all variable not mpg
+vif(full.model)
+vif(full.model)[,3]^2
+
+
+CarData_Model <- select(CarData_Clean, -c(Make, Model,"Engine Fuel Type", "Market Category", LogMSRP,  "Vehicle Style", "Transmission Type"))
+CarData_Model = select(CarData_Model, -c(Make, Model))
+
+full.model<-lm(MSRP~. -Model -Make ,data=CarData_Model) 
+vif(full.model)
+
+summary(full.model)
+
+
+CarData_Model2 = select(CarData_Model, -c(Make, Model, ))
+
+full.model<-lm(MSRP~. -Model -Make ,data=CarData_Model) 
+vif(full.model)
+summary(CarData_Model)
+summary(full.model)
+
+CarData %>% ggplot(aes(x=`Engine HP`, y=log(MSRP), color = Fuel_Category)) + geom_point() + geom_smooth(method='lm', formula= y~x)
+CarData %>% ggplot(aes(x=`Engine HP`, y=log(MSRP), color = Fuel_Category)) + geom_point() + geom_smooth(method='lm', formula= y~x)
+
+
+
+
+
+tbl = matrix(data=c(55, 45, 20, 30), nrow=2, ncol=2, byrow=T)
+dimnames(tbl) = list(City=c('B', 'T'), Gender=c('M', 'F'))
+
+chi2 = chisq.test(CarData_Clean, correct=F)
+c(chi2$statistic, chi2$p.value)
+
+
+
+
+# to look at the colinearity between 2 categories using a 2 way anova
+
+mysummary<-function(x){
+  result<-c(length(x),mean(x),sd(x),sd(x)/length(x))
+  names(result)<-c("N","Mean","SD","SE")
+  return(result)
+}
+sumstats<-aggregate(MSRP~Make*Model,data=CarData_Clean,mysummary)
+sumstats<-cbind(sumstats[,1:2],sumstats[,-(1:2)])
+sumstats
+
+
+ggplot(sumstats,aes(x=Model,y=Mean,group=Make,colour=Make))+
+  ylab("MSRP")+
+  geom_line()+
+  geom_point()+
+  geom_errorbar(aes(ymin=Mean-SE,ymax=Mean+SE),width=.1)
+
+
+
+model.fit<-aov(MSRP~Make+Model+Make:Model,data=CarData_Clean)
+par(mfrow=c(1,2))
+plot(model.fit$fitted.values,model.fit$residuals,ylab="Resdiduals",xlab="Fitted")
+qqnorm(model.fit$residuals)
+
+
+
+library(MASS)
+back.model=stepAIC(full.model,direction = "backward")
+
+
+
+#look at bic adjr2 and rss plots
+reg.fwd=regsubsets(MSRP~. ,data=CarData_Clean,method="forward",nvmax=1080)
+summary(reg.fwd)
+
+#Really handy predict function
+predict.regsubsets =function (object , newdata ,id ,...){
+  form=as.formula (object$call [[2]])
+  mat=model.matrix(form ,newdata )
+  coefi=coef(object ,id=id)
+  xvars=names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+
+testASE<-c()
+#note my index is to 20 since that what I set it in regsubsets
+for (i in 1:1080){
+  predictions<-predict.regsubsets(object=reg.fwd,newdata=CarData_Test,id=i) 
+  testASE[i]<-mean((CarData_Test$MSRP-predictions)^2)
+}
+par(mfrow=c(1,1))
+plot(1:1080,testASE,type="l",xlab="# of predictors",ylab="test vs train ASE")
+index<-which(testASE==min(testASE))
+points(index,testASE[index],col="red",pch=10)
+rss<-summary(reg.fwd)$rss
+lines(1:1080,rss/nrow(CarData_Training),lty=3,col="blue")  #Dividing by 100 since ASE=RSS/sample size
+
+#looking for the 35 coefs
+
+coef(reg.fwd,35)
+final.model = lm(log(MSRP)~., data = CarData_Model)
+
+plot(final.model)
+summary(final.model)
+confint(reg.fwd)
+
+
+
+
+
+
+par(mfrow=c(1,3))
+bics<-summary(reg.fwd)$bic
+plot(1:20,bics,type="l",ylab="BIC",xlab="# of predictors")
+index<-which(bics==min(bics))
+points(index,bics[index],col="red",pch=10)
+
+adjr2<-summary(reg.fwd)$adjr2
+plot(1:20,adjr2,type="l",ylab="Adjusted R-squared",xlab="# of predictors")
+index<-which(adjr2==max(adjr2))
+points(index,adjr2[index],col="red",pch=10)
+
+rss<-summary(reg.fwd)$rss
+plot(1:20,rss,type="l",ylab="train RSS",xlab="# of predictors")
+index<-which(rss==min(rss))
+points(index,rss[index],col="red",pch=10)
+
+coef(reg.fwd,12)
+
+anova(full.model2)
+summary(full.model2)
+
+
+
+
+```
+
+```{r Training test set from CarModel data set}
+
+CarData_Model <- dplyr::select(CarData_Clean, -c(  "Make", "Model","Market Category", "Engine Fuel Type" ))
+
+# Set some input variables to define the splitting.
+# Input 1. The data frame that you want to split into training, validation, and test.
+df <- CarData_Model
+
+# Input 2. Set the fractions of the dataframe you want to split into training, 
+# validation, and test.
+set.seed(1995)
+fractionTraining   <- 0.80
+fractionValidation <- 0.10
+fractionTest       <- 0.10
+
+# Compute sample sizes.
+sampleSizeTraining   <- floor(fractionTraining   * nrow(df))
+sampleSizeValidation <- floor(fractionValidation * nrow(df))
+sampleSizeTest       <- floor(fractionTest       * nrow(df))
+
+# Create the randomly-sampled indices for the dataframe. Use setdiff() to
+# avoid overlapping subsets of indices.
+indicesTraining    <- sort(sample(seq_len(nrow(df)), size=sampleSizeTraining))
+indicesNotTraining <- setdiff(seq_len(nrow(df)), indicesTraining)
+indicesValidation  <- sort(sample(indicesNotTraining, size=sampleSizeValidation))
+indicesTest        <- setdiff(indicesNotTraining, indicesValidation)
+
+# Finally, output the three dataframes for training, validation and test.
+CarData_Training   <- df[indicesTraining, ]
+CarData_Validation <- df[indicesValidation, ]
+CarData_Test       <- df[indicesTest, ]
+
+
+```
+
+```{r KNN/Regression Tree}
+
+
+
+#Train set split into input and output
+train_x = CarData_Training[,!colnames(CarData_Training)=="MSRP"]
+train_y = as.numeric(unlist(CarData_Training[,colnames(CarData_Training)=="MSRP"]))
+#Test set split into input and output
+test_x = CarData_Test[,!colnames(CarData_Test)=="MSRP"]
+
+test_y = as.numeric(unlist(CarData_Test[,colnames(CarData_Test)=="MSRP"]))
+#Model Train
+knnmodel = knnreg(train_x, train_y)
+#View Model
+str(knnmodel)
+#Try to predict
+pred_y = predict(knnmodel, test_x)
+
+
+# Regression tree train with dataset
+tree=rpart(MSRP~., data=CarData_Training, method="anova")
+#view detail of the tree
+printcp(tree)
+plotcp(tree)
+summary(tree)
+#Plot the model as a tree diagram 
+plot(tree, uniform=TRUE,
+     main="Classification Tree for MSRP")
+text(tree, use.n=TRUE, all=TRUE, cex=.8)
+
+#Start prediction and verify
+pred_y = predict(tree, test_x)
+plot(pred_y, test_y)
+abline(0,1)
+sqrt(mean((pred_y-test_y)^2))
+print(data.frame(test_y, pred_y))
+
+#regression analysis
+mse = mean((test_y - pred_y)^2)
+mae = caret::MAE(test_y, pred_y)
+rmse = caret::RMSE(test_y, pred_y)
+# Output for report
+cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+
+#prediction visualization
+x = 1:length(test_y)
+plot(x, test_y, col = "red", type = "l", lwd=2,
+     main = "MSRP test data prediction")
+lines(x, pred_y, col = "blue", lwd=2)
+legend("topright",  legend = c("MSRP", "predicted-MSRP"), 
+       fill = c("red", "blue"), col = 2:3,  adj = c(0, 0.6))
+```
+```{r validation interperatble}
+
+
+reg.fwd=regsubsets(MSRP ~ Year + `Engine HP` + Driven_Wheels + `city mpg` + 
+    Vehicle_Type + Performance_Type, data = CarData_Training,method="forward",nvmax=35)
+#summary(reg.fwd)
+
+#Really handy predict function
+predict.regsubsets =function (object , newdata ,id ,...){
+  form=as.formula (object$call [[2]])
+  mat=model.matrix(form ,newdata )
+  coefi=coef(object ,id=id)
+  xvars=names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+
+testASE<-c()
+#note my index is to 20 since that what I set it in regsubsets
+for (i in 1:10){
+  predictions<-predict.regsubsets(object=reg.fwd,newdata=CarData_Validation,id=i) 
+  testASE[i]<-mean((CarData_Validation$MSRP-predictions)^2)
+}
+par(mfrow=c(1,1))
+plot(1:10,testASE,type="l",xlab="# of predictors",ylab="Validation vs train ASE" , ylim=c(1e9,3e9) )
+index<-which(testASE==min(testASE))
+points(index,testASE[index],col="red",pch=10)
+rss<-summary(reg.fwd)$rss
+lines(1:10,rss/nrow(CarData_Training),lty=3,col="blue")  #Dividing by 100 since ASE=RSS/sample size
+
+
+
+
+
+```
+
+
+
+``` {r Validation sets complex }
+
+
+
+reg.fwd=regsubsets(log(MSRP)~Year + `Engine HP`*Vehicle_Type ,data=CarData_Training,method="forward",nvmax=35)
+summary(reg.fwd)
+
+#Really handy predict function
+predict.regsubsets =function (object , newdata ,id ,...){
+  form=as.formula (object$call [[2]])
+  mat=model.matrix(form ,newdata )
+  coefi=coef(object ,id=id)
+  xvars=names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+
+testASE<-c()
+#note my index is to 20 since that what I set it in regsubsets
+for (i in 1:6){
+  predictions<-predict.regsubsets(object=reg.fwd,newdata=CarData_Validation,id=i) 
+  testASE[i]<-mean((log(CarData_Validation$MSRP)-predictions)^2)
+}
+par(mfrow=c(1,1))
+plot(1:6,testASE,type="l",xlab="# of predictors",ylab="test vs train ASE")
+index<-which(testASE==min(testASE))
+points(index,testASE[index],col="red",pch=10)
+rss<-summary(reg.fwd)$rss
+lines(1:6,rss/nrow(CarData_Training),lty=3,col="blue")  #Dividing by 100 since ASE=RSS/sample size
+
+
+
+
+```
+
+```{r Test train validate for objective 1 and 2}
+
+fitControl<-trainControl(method="repeatedcv",number=10,repeats=10) #number is the k in k-fold
+
+# train model predicitve
+simple.fit<-train( MSRP ~ Year + `Engine HP` + Driven_Wheels + `city mpg` + 
+    Vehicle_Type + Performance_Type,
+               data=CarData_Training,
+               method="lm",
+               trControl=fitControl
+               )
+
+
+simple.fit
+
+
+#If you want the coefficients
+simple.fit$finalModel
+
+#Making predictions on the validation set
+simple.pred<-predict(simple.fit,CarData_Test)
+
+#Computing Errror Metrics
+simple.test<-postResample(pred=simple.pred,obs=CarData_Test$MSRP)
+simple.test
+
+plot(simple.pred,CarData_Test$MSRP)
+lines(0:2000,0:2000)
+
+
+
+
+
+#### Validate section of the data 
+
+#Making predictions on the validation set
+simple.pred2<-predict(simple.fit,CarData_Validation)
+
+#Computing Errror Metrics
+simple.validate<-postResample(pred=simple.pred2,obs=CarData_Validation$MSRP)
+simple.validate
+
+plot(simple.pred2,CarData_Validation$MSRP)
+lines(0:2000,0:2000)
+
+simple.test
+simple.validate
+
+
+
+###### Complex validate and test  Year + `Engine HP`*Vehicle_Type 
+
+
+
+fitControl<-trainControl(method="repeatedcv",number=10,repeats=10) #number is the k in k-fold
+
+# train model predicitve
+complex.fit<-train( log(MSRP) ~ Year + `Engine HP`*Vehicle_Type,
+               data=CarData_Training,
+               method="lm",
+               trControl=fitControl
+               )
+
+
+complex.fit
+
+
+#If you want the coefficients
+complex.fit$finalModel
+
+#Making predictions on the validation set
+complex.pred<-predict(complex.fit,CarData_Test)
+
+#Computing Errror Metrics
+complex.test<-postResample(pred=complex.pred,obs=log(CarData_Test$MSRP))
+complex.test
+
+plot(complex.pred,log(CarData_Test$MSRP))
+lines(0:2000,0:2000)
+
+
+
+
+#### Validate section of the data 
+
+#Making predictions on the validation set
+complex.pred2<-predict(complex.fit,CarData_Validation)
+
+#Computing Errror Metrics
+complex.validate<-postResample(pred=complex.pred2,obs=log(CarData_Validation$MSRP))
+complex.validate
+
+plot(complex.pred2,log(CarData_Validation$MSRP))
+lines(0:2000,0:2000)
+
+complex.test
+complex.validate
+
+
+```
+
+
+```{r Tree validation}
+
+
+#Train set split into input and output
+train_x = CarData_Training[,!colnames(CarData_Training)=="MSRP"]
+train_y = as.numeric(unlist(CarData_Training[,colnames(CarData_Training)=="MSRP"]))
+#Test set split into input and output
+test_x = CarData_Validation[,!colnames(CarData_Validation)=="MSRP"]
+
+test_y = as.numeric(unlist(CarData_Validation[,colnames(CarData_Validation)=="MSRP"]))
+#Model Train
+knnmodel = knnreg(train_x, train_y)
+#View Model
+str(knnmodel)
+#Try to predict
+#pred_y = predict(knnmodel, test_x)
+
+
+# Regression tree train with dataset
+tree=rpart(MSRP~., data=CarData_Training, method="anova")
+#view detail of the tree
+printcp(tree)
+plotcp(tree)
+summary(tree)
+#Plot the model as a tree diagram 
+plot(tree, uniform=TRUE,
+     main="Classification Tree for MSRP")
+text(tree, use.n=TRUE, all=TRUE, cex=.8)
+
+#Start prediction and verify
+pred_y = predict(tree, test_x)
+plot(pred_y, test_y)
+abline(0,1)
+sqrt(mean((pred_y-test_y)^2))
+print(data.frame(test_y, pred_y))
+
+#regression analysis
+mse = mean((test_y - pred_y)^2)
+mae = caret::MAE(test_y, pred_y)
+rmse = caret::RMSE(test_y, pred_y)
+# Output for report
+cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+
+```
+
+
+```{r Knn}
+
+#Model Train
+knn.fit<-train(MSRP~.,
+               data=CarData_Training,
+               method="knn",preProcess = c("center","scale"),
+               tuneGrid=data.frame(k=c(1:5)))
+#View Model
+plot(knn.fit)
+#Prediction and validation
+knn.pred<-predict(knn.fit,CarData_Test)
+knn.Test<-postResample(pred=knn.pred,obs=CarData_Test$MSRP)
+knn.Test
+plot(knn.pred,CarData_Test$MSRP)
+knn.pred = predict(knn.fit, CarData_Validation)
+knn.validate<-postResample(pred=knn.pred,obs=CarData_Validation$MSRP)
+knn.validate
+plot(knn.pred,CarData_Validation$MSRP)
+#Finding of k used by printing model
+knn.fit
+
+```
+
+
